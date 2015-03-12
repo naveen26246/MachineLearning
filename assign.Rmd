@@ -1,0 +1,144 @@
+---
+title: "Predicting the form of barbell lift"
+output: html_document
+---
+
+##Synopsis
+
+  Applications of human activity recognition is escalating over the past few years which  often estimate the quantity of work done. The experimental data used in this project aims to predict the quality of barbell lifts performed in 5 different ways only one of which is precise. Data is collected from the accelerometers attached to the belt,arm,forearm and dumbbell of each participant. 
+  Predictions using random forest algorithm gives an accuracy of **99.78%** and estimated out of sample error rate of **0.25%**
+
+### Loading Data
+```{r loadPackages,message=FALSE}
+library(caret)
+library(randomForest)
+
+```
+
+
+```{r loadData,echo=TRUE}
+traindata <- read.csv("pml-training.csv")
+testfinal <- read.csv("pml-testing.csv")
+dim <- as.data.frame(rbind("traindata"=dim(traindata),"testfinal"=dim(testfinal)))
+names(dim) <- c("rows","columns")
+dim
+```
+
+### Cleaning Data
+
+  The complete dataset, _traindata_ and the final testset, _testfinal_ have **160** variables few of which can be eliminated for our analysis for various reasons. Firstly, there are few index variables( _columns 1 to 5_ ) and there are several other variables which have lots of NA's(_nacols_ ). These variables are removed to obtain a clean dataset, _**trainingdata**_. Corresponding changes are even made to the final test dataset. The numnber of variables considerably diminished to `r length(trainingdata)`
+  
+```{r cleanData}
+      
+      traindata <- traindata[,-c(1,2,3,4,5)]
+      testfinal <- testfinal[,-c(1,2,3,4,5)]
+#Removing NA's
+      nacols <- c(NULL)
+        for(i in 1:length(traindata)) nacols[i] <- sum(is.na(traindata[,i]))>5000
+          trainingdata <- traindata[!nacols]
+          testfinal <- testfinal[!nacols]
+          dim <- rbind(dim,trainingdata=dim(trainingdata))
+          dim
+      
+```
+### Splitting Data
+
+  As our final test set has only 20 samples, we need to build training(75%) and test datasets(25%) from the clean _trainingdata_ for the sake of cross validation.Any preprocessing is to be done on the new _training_ dataset on which are about to build a model.
+  
+```{r splitData}
+set.seed(1234)
+inTrain <- createDataPartition(trainingdata$classe,p=0.75,list=FALSE)
+train <- trainingdata[inTrain,]
+test <- trainingdata[-inTrain,]
+```
+
+### Check for highly correlated variables
+  Even though our data is now ready for modeling, a more efficient way is to check for ineffective variables. First, the variables with variances close to zero are removed using  _nearZeroVar()_  function and then the rest of the variables are checked for redundancy. 
+  It is observed that three variables are highly correlated() and are removed using  _findCorrelation()_  function.
+
+```{r preProcess}
+set.seed(1234)
+nearZeroVars <- nearZeroVar(train,saveMetrics=TRUE)
+training_NZ <- train[!nearZeroVars$nzv]
+testing_NZ <- test[!nearZeroVars$nzv]
+testfinal <- testfinal[!nearZeroVars$nzv]
+
+set.seed(2345)
+highCorr <- findCorrelation(cor(training_NZ[,-length(training_NZ)]))
+training <- training_NZ[,-highCorr]
+testing <- testing_NZ[,-highCorr]
+testfinal <- testfinal[,-highCorr]
+dim <- rbind(dim,"training"=dim(training),
+             "testing"=dim(testing),"testfinal"=dim(testfinal))
+dim
+```
+
+
+### Transformations
+  It is also important that all the variables have similar class for a faster computation. Our variables are a mixture of integers and numeric classes and hence all of them,except Classe, are converted to numeric.
+  
+```{r transformation}
+a <- length(training)-1
+          for(i in 1:a) {
+              training[,i] <- as.numeric(training[,i])
+              testing[,i] <- as.numeric(testing[,i])
+              testfinal[,i] <- as.numeric(testfinal[,i])
+          }
+
+```
+### Fitting a model
+  A random forest algorithm is used on the _training_ data to build our model and the predictions are made on the _testing_ data. The cross validation resulted in a good accuracy of 99.78%, which means that the out of sample error rate(OOB) of the model is **0.25%**. The model has 500 trees with 6 variables tried at each split.
+
+```{r modelfit}
+mod1 <- randomForest(classe~.,data=training)
+pred <- predict(mod1,testing,type="class")
+mod1
+```
+
+### Cross Validation
+```{r cv}
+confusionMatrix(pred,testing$classe)
+```
+ 
+### Predicting the final test data
+```{r answers}
+predictions <- predict(mod1,testfinal,type="class")
+answers <- as.character(predictions)
+predictions
+```
+
+## Plotting Percentage of Predictions
+```{r plot}
+actual = as.data.frame(table(testing$classe))
+names(actual) = c("Actual","ActualFreq")
+
+predicted <- as.data.frame(table("Predicted"=pred,"Actual"=testing$classe))
+confusion = cbind(predicted, actual)
+confusion$Percent = confusion$Freq/confusion$ActualFreq*100
+
+## Plotting Heatmap
+tile <- ggplot() +
+  geom_tile(aes(x=Actual, y=Predicted,fill=Percent),data=confusion, 
+            color="black",size=0.1) +labs(x="Actual",y="Predicted")
+tile = tile + geom_text(aes(x=Actual,y=Predicted, 
+              label=sprintf("%.2f", Percent)), data=confusion, size=3, 
+              colour="black") + scale_fill_gradient(low="grey",high="red")
+
+tile = tile + geom_tile(aes(x=Actual,y=Predicted),
+              data=subset(confusion, as.character(Actual)==as.character(Predicted)), color="black",size=0.3, fill="black", alpha=0)
+tile
+```
+
+## Appendix
+
+Source:
+
+  - The data deployed in the analysis is obtained from the Weight Lifting Exercise data provided in the paper by Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+  
+Classes of exercises(Output): 
+
+  - Class A: Exactly according to the specification
+  - Class B: Throwing the elbows to the front
+  - Class C: Lifting the dumbbell only halfway
+  - Class D: Lowering the dumbbell only halfway
+  - Class E: Throwing the hips to the front
